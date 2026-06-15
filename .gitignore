@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Script runtime output
+data/
+downloads/
+logs/
+.wechat-profile/
+*.part
+
+# Local config and secrets
+.env
+.env.*
+config.json
+config.local.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

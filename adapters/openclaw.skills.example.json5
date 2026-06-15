@@ -1,0 +1,11 @@
+// Example OpenClaw-style skill loading snippet.
+// Copy the relevant field into your own OpenClaw config and adjust the path.
+{
+  skills: {
+    load: {
+      extraDirs: [
+        "/absolute/path/to/podcast-to-wechat-audio"
+      ]
+    }
+  }
+}

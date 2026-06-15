@@ -1,0 +1,4 @@
+interface:
+  display_name: "Podcast to WeChat Audio"
+  short_description: "Sync podcast RSS episodes to WeChat Channels audio."
+  default_prompt: "Use $podcast-to-wechat-audio to turn a podcast RSS feed into a WeChat Channels audio upload queue."
