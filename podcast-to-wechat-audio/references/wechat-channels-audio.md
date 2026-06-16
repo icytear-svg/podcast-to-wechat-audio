@@ -11,6 +11,7 @@ Use these notes when automating WeChat Channels Assistant audio publishing.
 - Uploading a cover opens an `编辑音频封面` crop/confirmation dialog. It is safe to click `确认` after uploading the intended cover.
 - Do not block solely on visible cover progress percentages. The form may be submittable while a percentage is still shown.
 - Prefer checking that the submit button is visible and enabled.
+- A visible audio file card is not enough to prove the audio is accepted. If the form still shows `请上传音频` or `音频信息不符合要求`, keep waiting or fail before clicking publish.
 
 ## Media Constraints Observed
 
@@ -23,5 +24,6 @@ Use these notes when automating WeChat Channels Assistant audio publishing.
 - Use a persistent browser profile directory such as `.wechat-profile/` in the project folder, not in the skill folder.
 - Keep `pause` as the default mode. Require explicit user confirmation before using `publish`.
 - Take screenshots for filled forms and errors. Store them in project-local `logs/screenshots/`.
+- Do not mark a queue row as `uploaded` immediately after clicking publish. Re-open the audio manager and verify the new row by title fragment or episode number first.
 - After each submitted item, navigate directly to the create-audio URL for the next item instead of relying on list-page state.
 - When retries are needed, reset only the affected queue rows from `error` to `pending`.

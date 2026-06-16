@@ -44,6 +44,7 @@ PROFILE_DIR = ROOT / ".wechat-profile"
 WECHAT_AUDIO_DIR = ROOT / "downloads" / "wechat_audio"
 DEFAULT_URL = "https://channels.weixin.qq.com/platform"
 CREATE_AUDIO_URL = "https://channels.weixin.qq.com/platform/post/createAudio"
+AUDIO_MANAGER_URL = "https://channels.weixin.qq.com/platform/post/audioManager"
 
 
 TEXT = {
@@ -679,16 +680,23 @@ def fill_form(page: Page, item: QueueItem, args: argparse.Namespace) -> None:
     )
 
 
-def wait_for_upload_settle(page: Page, seconds: int) -> None:
+def wait_for_upload_settle(page: Page, seconds: int) -> bool:
     print(f"Waiting up to {seconds}s for the submit button to become usable...")
+    last_error = ""
     for _ in range(seconds):
         confirm_cover_modal(page, timeout_ms=500, manual_wait_ms=0)
-        if submit_button_ready(page):
+        last_error = submission_error_text(page)
+        if submit_button_ready(page) and not last_error:
             page.wait_for_timeout(3000)
-            if submit_button_ready(page):
-                return
+            last_error = submission_error_text(page)
+            if submit_button_ready(page) and not last_error:
+                return True
         page.wait_for_timeout(1000)
-    print("Submit button did not become clearly usable; continuing with screenshot for inspection.")
+    if last_error:
+        print(f"Upload did not settle; visible page error remains: {last_error}")
+    else:
+        print("Submit button did not become clearly usable; continuing with screenshot for inspection.")
+    return False
 
 
 def submit_button_ready(page: Page) -> bool:
@@ -753,6 +761,129 @@ def click_submit(page: Page, mode: str) -> bool:
     return True
 
 
+def collect_visible_text(page: Page) -> str:
+    parts: list[str] = []
+    for scope in page_scopes(page):
+        try:
+            parts.append(scope.evaluate("document.body ? document.body.innerText : ''"))
+        except Exception:
+            continue
+    return "\n".join(part for part in parts if part)
+
+
+def submission_error_text(page: Page) -> str:
+    text = collect_visible_text(page)
+    patterns = [
+        "\u8bf7\u4e0a\u4f20\u97f3\u9891",
+        "\u97f3\u9891\u4fe1\u606f\u4e0d\u7b26\u5408\u8981\u6c42",
+        "\u4e0d\u7b26\u5408\u8981\u6c42",
+        "\u8bf7\u4fee\u6539",
+    ]
+    for pattern in patterns:
+        if pattern in text:
+            return pattern
+    return ""
+
+
+def manager_frame(page: Page) -> Any:
+    for frame in page.frames:
+        if "micro/content/post/audioManager" in frame.url:
+            return frame
+    return page.main_frame
+
+
+def scroll_manager_to_bottom(scope: Any) -> None:
+    scope.evaluate(
+        """() => {
+            const scrollables = Array.from(document.querySelectorAll('*'))
+                .filter((el) => el.scrollHeight > el.clientHeight + 100)
+                .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
+            if (scrollables[0]) scrollables[0].scrollTop = scrollables[0].scrollHeight;
+            if (document.scrollingElement) {
+                document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight;
+            }
+        }"""
+    )
+
+
+def click_manager_page(scope: Any, page_number: int) -> bool:
+    return bool(
+        scope.evaluate(
+            """(pageNumber) => {
+                const labels = Array.from(document.querySelectorAll('label.weui-desktop-pagination__num'));
+                const target = labels.find((el) => (el.innerText || el.textContent || '').trim() === String(pageNumber));
+                if (!target) return false;
+                target.click();
+                return true;
+            }""",
+            page_number,
+        )
+    )
+
+
+def item_match_needles(item: QueueItem) -> list[str]:
+    needles = []
+    title = item.title.strip()
+    if title:
+        needles.append(title)
+        for size in (30, 20, 12):
+            if len(title) > size:
+                needles.append(title[:size])
+    episode_no = item.data.get("episode_no", "").strip()
+    if re.fullmatch(r"\d{3}", episode_no):
+        needles.extend([f"-{episode_no}", f"-{int(episode_no)}"])
+    elif episode_no:
+        needles.append(episode_no)
+    return [needle for needle in dict.fromkeys(needles) if needle]
+
+
+def text_matches_item(text: str, item: QueueItem) -> bool:
+    return any(needle in text for needle in item_match_needles(item))
+
+
+def verify_published_in_manager(page: Page, item: QueueItem, pages: int = 2) -> bool:
+    page.goto(AUDIO_MANAGER_URL, wait_until="domcontentloaded", timeout=60000)
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except PlaywrightTimeoutError:
+        pass
+    page.wait_for_timeout(5000)
+
+    scope = manager_frame(page)
+    for page_number in range(1, max(1, pages) + 1):
+        if page_number > 1:
+            scroll_manager_to_bottom(scope)
+            if not click_manager_page(scope, page_number):
+                return False
+            page.wait_for_timeout(4000)
+            scope = manager_frame(page)
+        text = collect_visible_text(page)
+        if text_matches_item(text, item):
+            return True
+    return False
+
+
+def verify_submission_success(page: Page, item: QueueItem, mode: str, verify_pages: int) -> str:
+    page.wait_for_timeout(3000)
+    error_text = submission_error_text(page)
+    if error_text:
+        raise RuntimeError(f"Submit failed with visible page error: {error_text}")
+
+    if mode == "draft":
+        return "drafted"
+
+    if mode != "publish":
+        raise ValueError(f"Unsupported submit mode: {mode}")
+
+    if verify_published_in_manager(page, item, pages=verify_pages):
+        return "uploaded"
+
+    raise RuntimeError(
+        "Submit click did not verify as published in WeChat audio manager. "
+        "Queue status left as error for manual inspection/retry."
+    )
+
+
 def screenshot(page: Page, stem: str) -> Path:
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
     path = SCREENSHOT_DIR / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{stem}.png"
@@ -815,7 +946,7 @@ def process_item(page: Page, item: QueueItem, args: argparse.Namespace) -> str:
     ensure_assets(item, args.download_missing)
     open_publish_form(page)
     fill_form(page, item, args)
-    wait_for_upload_settle(page, args.upload_wait)
+    upload_ready = wait_for_upload_settle(page, args.upload_wait)
     shot = screenshot(page, f"filled-{item.data.get('episode_no', item.guid)}")
     print(f"Filled form screenshot: {shot}")
 
@@ -828,9 +959,11 @@ def process_item(page: Page, item: QueueItem, args: argparse.Namespace) -> str:
             time.sleep(args.pause_seconds)
         return "filled"
 
+    if not upload_ready:
+        raise RuntimeError("Upload did not become valid before submit; not clicking publish.")
+
     if click_submit(page, args.submit_mode):
-        page.wait_for_timeout(3000)
-        status = "drafted" if args.submit_mode == "draft" else "uploaded"
+        status = verify_submission_success(page, item, args.submit_mode, args.verify_pages)
         screenshot(page, f"{status}-{item.data.get('episode_no', item.guid)}")
         return status
 
@@ -854,6 +987,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--download-missing", action="store_true")
     parser.add_argument("--upload-wait", type=int, default=90)
+    parser.add_argument("--verify-pages", type=int, default=2, help="Audio manager pages to scan before marking publish as uploaded.")
     parser.add_argument("--pause-seconds", type=int, default=120)
     parser.add_argument("--wait-for-enter", action="store_true")
     parser.add_argument("--manual-cover-confirm-seconds", type=int, default=30)
