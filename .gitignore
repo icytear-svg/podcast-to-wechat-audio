@@ -1,4 +1,4 @@
-# Python
+# Python / Python 缓存与虚拟环境
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -7,20 +7,20 @@ __pycache__/
 .venv/
 venv/
 
-# Script runtime output
+# Script runtime output / 脚本运行时输出
 data/
 downloads/
 logs/
 .wechat-profile/
 *.part
 
-# Local config and secrets
+# Local config and secrets / 本地配置与密钥
 .env
 .env.*
 config.json
 config.local.json
 
-# OS/editor noise
+# OS/editor noise / 系统与编辑器临时文件
 .DS_Store
 Thumbs.db
 .idea/

@@ -1,4 +1,6 @@
+// OpenClaw 风格 skill 加载示例。
 // Example OpenClaw-style skill loading snippet.
+// 把相关字段复制到你自己的 OpenClaw 配置中，并按需修改路径。
 // Copy the relevant field into your own OpenClaw config and adjust the path.
 {
   skills: {

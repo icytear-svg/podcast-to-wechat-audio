@@ -1,4 +1,4 @@
 interface:
-  display_name: "Podcast to WeChat Audio"
-  short_description: "Sync podcast RSS episodes to WeChat Channels audio."
-  default_prompt: "Use $podcast-to-wechat-audio to turn a podcast RSS feed into a WeChat Channels audio upload queue."
+  display_name: "播客同步到视频号音频 / Podcast to WeChat Audio"
+  short_description: "把播客 RSS 节目同步到微信视频号音频 / Sync podcast RSS episodes to WeChat Channels audio."
+  default_prompt: "Use $podcast-to-wechat-audio to turn a podcast RSS feed into a WeChat Channels audio upload queue. 使用 $podcast-to-wechat-audio 将播客 RSS 转成微信视频号音频上传队列。"
