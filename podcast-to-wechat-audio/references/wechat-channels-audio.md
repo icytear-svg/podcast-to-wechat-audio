@@ -44,6 +44,8 @@ Use these notes when automating WeChat Channels Assistant audio publishing.
 - Take screenshots for filled forms and errors. Store them in project-local `logs/screenshots/`.
 - 点击发布后不要立刻把队列写成 `uploaded`。必须重新打开音频管理页，并用标题片段或期号确认新条目存在。
 - Do not mark a queue row as `uploaded` immediately after clicking publish. Re-open the audio manager and verify the new row by title fragment or episode number first.
+- 新条目进入列表后可能先显示 `转码中`。必须继续轮询，直到同一行状态变为 `已发表`，再写入 `uploaded`。
+- A new row may appear as `转码中` first. Keep polling until that same row changes to `已发表` before marking it as `uploaded`.
 - 每条提交后，下一条直接导航到新建音频 URL，不依赖列表页状态。
 - After each submitted item, navigate directly to the create-audio URL for the next item instead of relying on list-page state.
 - 需要重试时，只把受影响的队列行从 `error` 改回 `pending`。

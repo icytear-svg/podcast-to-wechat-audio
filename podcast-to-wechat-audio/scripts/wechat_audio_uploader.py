@@ -870,6 +870,16 @@ def text_matches_item(text: str, item: QueueItem) -> bool:
     return any(needle in text for needle in item_match_needles(item))
 
 
+def text_has_published_item(text: str, item: QueueItem) -> bool:
+    # Rows in the audio manager are exposed as text blocks containing title,
+    # metrics, status, and actions. Require the row status to be published.
+    blocks = [block.strip() for block in re.split(r"\n{2,}", text) if block.strip()]
+    for block in blocks:
+        if text_matches_item(block, item) and "\u5df2\u53d1\u8868" in block:
+            return True
+    return False
+
+
 def verify_published_in_manager(page: Page, item: QueueItem, pages: int = 2) -> bool:
     page.goto(AUDIO_MANAGER_URL, wait_until="domcontentloaded", timeout=60000)
     try:
@@ -887,12 +897,18 @@ def verify_published_in_manager(page: Page, item: QueueItem, pages: int = 2) -> 
             page.wait_for_timeout(4000)
             scope = manager_frame(page)
         text = collect_visible_text(page)
-        if text_matches_item(text, item):
+        if text_has_published_item(text, item):
             return True
     return False
 
 
-def verify_submission_success(page: Page, item: QueueItem, mode: str, verify_pages: int) -> str:
+def verify_submission_success(
+    page: Page,
+    item: QueueItem,
+    mode: str,
+    verify_pages: int,
+    verify_wait_seconds: int,
+) -> str:
     page.wait_for_timeout(3000)
     error_text = submission_error_text(page)
     if error_text:
@@ -904,8 +920,16 @@ def verify_submission_success(page: Page, item: QueueItem, mode: str, verify_pag
     if mode != "publish":
         raise ValueError(f"Unsupported submit mode: {mode}")
 
-    if verify_published_in_manager(page, item, pages=verify_pages):
-        return "uploaded"
+    deadline = time.time() + max(0, verify_wait_seconds)
+    attempt = 0
+    while True:
+        attempt += 1
+        if verify_published_in_manager(page, item, pages=verify_pages):
+            return "uploaded"
+        if time.time() >= deadline:
+            break
+        print(f"Publish not verified as 已发表 yet; waiting before recheck #{attempt + 1}...")
+        page.wait_for_timeout(10000)
 
     raise RuntimeError(
         "Submit click did not verify as published in WeChat audio manager. "
@@ -992,7 +1016,13 @@ def process_item(page: Page, item: QueueItem, args: argparse.Namespace) -> str:
         raise RuntimeError("Upload did not become valid before submit; not clicking publish.")
 
     if click_submit(page, args.submit_mode):
-        status = verify_submission_success(page, item, args.submit_mode, args.verify_pages)
+        status = verify_submission_success(
+            page,
+            item,
+            args.submit_mode,
+            args.verify_pages,
+            args.publish_verify_wait,
+        )
         screenshot(page, f"{status}-{item.data.get('episode_no', item.guid)}")
         return status
 
@@ -1017,6 +1047,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--download-missing", action="store_true")
     parser.add_argument("--upload-wait", type=int, default=90)
     parser.add_argument("--verify-pages", type=int, default=2, help="Audio manager pages to scan before marking publish as uploaded.")
+    parser.add_argument("--publish-verify-wait", type=int, default=180, help="Seconds to wait for a submitted audio row to become 已发表.")
     parser.add_argument("--pause-seconds", type=int, default=120)
     parser.add_argument("--wait-for-enter", action="store_true")
     parser.add_argument("--manual-cover-confirm-seconds", type=int, default=30)
