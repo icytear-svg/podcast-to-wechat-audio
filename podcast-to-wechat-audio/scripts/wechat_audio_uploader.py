@@ -681,19 +681,24 @@ def fill_form(page: Page, item: QueueItem, args: argparse.Namespace) -> None:
 
 
 def wait_for_upload_settle(page: Page, seconds: int) -> bool:
-    print(f"Waiting up to {seconds}s for the submit button to become usable...")
+    print(f"Waiting up to {seconds}s for the submit button to become usable and upload progress to disappear...")
     last_error = ""
+    progress_visible = False
     for _ in range(seconds):
         confirm_cover_modal(page, timeout_ms=500, manual_wait_ms=0)
         last_error = submission_error_text(page)
-        if submit_button_ready(page) and not last_error:
+        progress_visible = upload_progress_visible(page)
+        if submit_button_ready(page) and not last_error and not progress_visible:
             page.wait_for_timeout(3000)
             last_error = submission_error_text(page)
-            if submit_button_ready(page) and not last_error:
+            progress_visible = upload_progress_visible(page)
+            if submit_button_ready(page) and not last_error and not progress_visible:
                 return True
         page.wait_for_timeout(1000)
     if last_error:
         print(f"Upload did not settle; visible page error remains: {last_error}")
+    elif progress_visible:
+        print("Upload did not settle; upload progress is still visible.")
     else:
         print("Submit button did not become clearly usable; continuing with screenshot for inspection.")
     return False
@@ -783,6 +788,30 @@ def submission_error_text(page: Page) -> str:
         if pattern in text:
             return pattern
     return ""
+
+
+def upload_progress_visible(page: Page) -> bool:
+    for scope in page_scopes(page):
+        try:
+            if scope.evaluate(
+                """() => {
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.visibility !== 'hidden'
+                            && style.display !== 'none'
+                            && rect.width > 0
+                            && rect.height > 0;
+                    };
+                    const percentText = /(^|\\s)(?:[1-9]?\\d|100)%(\\s|$)/;
+                    return Array.from(document.querySelectorAll('div, span, p, i, em, strong'))
+                        .some((el) => visible(el) && percentText.test((el.innerText || el.textContent || '').trim()));
+                }"""
+            ):
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def manager_frame(page: Page) -> Any:

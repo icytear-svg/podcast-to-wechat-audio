@@ -22,6 +22,8 @@ Use these notes when automating WeChat Channels Assistant audio publishing.
 - Prefer checking that the submit button is visible and enabled.
 - 音频文件卡片可见，不代表平台已经接受音频。如果表单仍显示 `请上传音频` 或 `音频信息不符合要求`，继续等待或在点击发布前失败退出。
 - A visible audio file card is not enough to prove the audio is accepted. If the form still shows `请上传音频` or `音频信息不符合要求`, keep waiting or fail before clicking publish.
+- 音频上传进度显示 `100%` 后也不要立刻点击发布。继续等待，直到百分比进度元素从页面上消失。
+- Do not publish immediately when audio upload progress reaches `100%`. Keep waiting until the visible percentage/progress element disappears.
 
 ## 媒体限制观察 / Media Constraints Observed
 
