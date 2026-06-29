@@ -20,6 +20,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -231,6 +232,21 @@ def parse_feed(feed_url: str, description_limit: int) -> tuple[dict[str, str], l
 
 
 def load_existing_statuses() -> dict[str, dict[str, str]]:
+    if MANIFEST_CSV.exists():
+        statuses: dict[str, dict[str, str]] = {}
+        with MANIFEST_CSV.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                guid = str(row.get("guid", ""))
+                if guid:
+                    statuses[guid] = {
+                        "upload_status": str(row.get("upload_status", "pending")),
+                        "uploaded_at": str(row.get("uploaded_at", "")),
+                        "notes": str(row.get("notes", "")),
+                    }
+        if statuses:
+            return statuses
+
     if not MANIFEST_JSON.exists():
         return {}
     try:
@@ -348,6 +364,44 @@ def download(args: argparse.Namespace) -> None:
             time.sleep(args.sleep)
 
 
+def load_queue_rows() -> list[dict[str, str]]:
+    if not MANIFEST_CSV.exists():
+        return []
+    with MANIFEST_CSV.open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def status(args: argparse.Namespace) -> None:
+    rows = load_queue_rows()
+    if not rows:
+        print(f"No queue found at: {MANIFEST_CSV}")
+        return
+
+    counts = Counter(row.get("upload_status") or "pending" for row in rows)
+    latest = rows[0]
+    print(f"Queue: {MANIFEST_CSV}")
+    print(f"Episodes: {len(rows)}")
+    for name in ("pending", "error", "drafted", "uploaded"):
+        print(f"{name}: {counts.get(name, 0)}")
+    print(
+        "Latest: "
+        f"{latest.get('episode_no', '')} | {latest.get('upload_status', 'pending')} | "
+        f"{latest.get('title', '')}"
+    )
+
+    shown = 0
+    for row in rows:
+        row_status = row.get("upload_status") or "pending"
+        if row_status in {"pending", "error", "drafted"}:
+            print(
+                f"{row_status}: {row.get('episode_no', '')} | "
+                f"{row.get('pub_date', '')} | {row.get('title', '')}"
+            )
+            shown += 1
+            if shown >= args.limit:
+                break
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Sync podcast RSS metadata for WeChat audio.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -365,6 +419,10 @@ def main(argv: list[str] | None = None) -> int:
     download_parser.add_argument("--sleep", type=float, default=0.0, help="Seconds to wait between files.")
     download_parser.add_argument("--refresh", action="store_true", help="Refresh the RSS first.")
     download_parser.set_defaults(func=download)
+
+    status_parser = subparsers.add_parser("status", help="Summarize the local upload queue.")
+    status_parser.add_argument("--limit", type=int, default=10, help="Pending/error rows to show.")
+    status_parser.set_defaults(func=status)
 
     args = parser.parse_args(argv)
     try:
