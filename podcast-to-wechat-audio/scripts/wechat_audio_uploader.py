@@ -45,6 +45,7 @@ WECHAT_AUDIO_DIR = ROOT / "downloads" / "wechat_audio"
 DEFAULT_URL = "https://channels.weixin.qq.com/platform"
 CREATE_AUDIO_URL = "https://channels.weixin.qq.com/platform/post/createAudio"
 AUDIO_MANAGER_URL = "https://channels.weixin.qq.com/platform/post/audioManager"
+DEFAULT_TITLE_MAX_CHARS = 40
 
 
 TEXT = {
@@ -107,6 +108,36 @@ def resolve_path(value: str) -> Path:
     if path.is_absolute():
         return path
     return ROOT / path
+
+
+def fit_wechat_title(title: str, episode_no: str, max_chars: int = DEFAULT_TITLE_MAX_CHARS) -> str:
+    title = title.strip()
+    if max_chars <= 0 or len(title) <= max_chars:
+        return title
+
+    suffix = ""
+    if re.fullmatch(r"\d{3}", episode_no or ""):
+        candidate = f"-{episode_no}"
+        if title.endswith(candidate):
+            suffix = candidate
+    elif title.endswith("-番外"):
+        suffix = "-番外"
+
+    if suffix:
+        base = title[: -len(suffix)].rstrip(" -_")
+        available = max_chars - len(suffix)
+        if available > 0:
+            return base[:available].rstrip(" ，。！？、…-") + suffix
+
+    return title[:max_chars].rstrip(" ，。！？、…-")
+
+
+def apply_title_limit(item: QueueItem, max_chars: int) -> None:
+    title = item.title
+    fitted = fit_wechat_title(title, item.data.get("episode_no", ""), max_chars)
+    if fitted != title:
+        print(f"Shortening title to {len(fitted)}/{max_chars} chars: {fitted}")
+        item.data["wechat_title"] = fitted
 
 
 def require_playwright() -> None:
@@ -194,6 +225,74 @@ def ensure_assets(item: QueueItem, download_missing: bool) -> None:
     if not item.audio_path.exists():
         print(f"Downloading audio: {item.audio_path.name}")
         sync_feed.download_file(item.audio_url, item.audio_path, item.audio_length)
+
+
+def planned_wechat_audio_path(item: QueueItem, transcode: bool) -> Path:
+    source = item.audio_path
+    if source.suffix.lower() in {".mp3", ".wav"} or not transcode:
+        return source
+    return WECHAT_AUDIO_DIR / f"{source.stem}.mp3"
+
+
+def preflight_item(item: QueueItem, args: argparse.Namespace, prepare: bool = False) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    apply_title_limit(item, args.title_max_chars)
+
+    if prepare and args.download_missing:
+        try:
+            ensure_assets(item, download_missing=True)
+        except Exception as exc:
+            errors.append(f"asset download failed: {type(exc).__name__}: {exc}")
+
+    if args.title_max_chars > 0 and len(item.title) > args.title_max_chars:
+        errors.append(f"title is {len(item.title)} chars after fitting; max is {args.title_max_chars}")
+    if not item.description.strip():
+        warnings.append("description is empty")
+
+    audio_exists = item.audio_path.exists()
+    cover_exists = item.cover_path.exists()
+    if not audio_exists and not args.download_missing:
+        errors.append(f"audio is missing: {item.audio_path}")
+    if not cover_exists and not args.download_missing:
+        errors.append(f"cover is missing: {item.cover_path}")
+    if not audio_exists and args.download_missing and not item.audio_url:
+        errors.append("audio is missing and audio_url is empty")
+    if not cover_exists and args.download_missing and not item.cover_url:
+        errors.append("cover is missing and cover_url is empty")
+
+    planned_audio = planned_wechat_audio_path(item, args.transcode_mp3)
+    if item.audio_path.suffix.lower() not in {".mp3", ".wav"} and args.transcode_mp3:
+        try:
+            find_ffmpeg()
+        except FileNotFoundError as exc:
+            errors.append(str(exc))
+        if prepare and item.audio_path.exists():
+            try:
+                wechat_audio_path(item, args.transcode_mp3)
+            except Exception as exc:
+                errors.append(f"audio transcode failed: {type(exc).__name__}: {exc}")
+        if planned_audio.exists() and item.audio_path.exists() and planned_audio.stat().st_mtime < item.audio_path.stat().st_mtime:
+            warnings.append(f"cached MP3 is older than source and will be regenerated: {planned_audio}")
+
+    return errors, warnings
+
+
+def preflight_items(items: list[QueueItem], args: argparse.Namespace, prepare: bool = False) -> bool:
+    ok = True
+    for item in items:
+        errors, warnings = preflight_item(item, args, prepare=prepare)
+        print(f"{item.data.get('episode_no')} | {item.title}")
+        print(f"  audio: {item.audio_path} ({'ok' if item.audio_path.exists() else 'missing'})")
+        print(f"  cover: {item.cover_path} ({'ok' if item.cover_path.exists() else 'missing'})")
+        print(f"  wechat audio: {planned_wechat_audio_path(item, args.transcode_mp3)}")
+        for warning in warnings:
+            print(f"  warning: {warning}")
+        for error in errors:
+            print(f"  error: {error}")
+        if errors:
+            ok = False
+    return ok
 
 
 def find_ffmpeg() -> str:
@@ -995,6 +1094,7 @@ def write_debug_snapshot(page: Page, stem: str) -> Path:
 
 
 def process_item(page: Page, item: QueueItem, args: argparse.Namespace) -> str:
+    apply_title_limit(item, args.title_max_chars)
     print(f"\nProcessing {item.data.get('episode_no')}: {item.title}")
     ensure_assets(item, args.download_missing)
     open_publish_form(page)
@@ -1029,11 +1129,8 @@ def process_item(page: Page, item: QueueItem, args: argparse.Namespace) -> str:
     raise RuntimeError(f"Could not click submit button for mode: {args.submit_mode}")
 
 
-def dry_run(items: list[QueueItem]) -> None:
-    for item in items:
-        print(f"{item.data.get('episode_no')} | {item.title}")
-        print(f"  audio: {item.audio_path} ({'ok' if item.audio_path.exists() else 'missing'})")
-        print(f"  cover: {item.cover_path} ({'ok' if item.cover_path.exists() else 'missing'})")
+def dry_run(items: list[QueueItem], args: argparse.Namespace) -> None:
+    preflight_items(items, args, prepare=False)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1047,6 +1144,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--download-missing", action="store_true")
     parser.add_argument("--upload-wait", type=int, default=90)
     parser.add_argument("--verify-pages", type=int, default=2, help="Audio manager pages to scan before marking publish as uploaded.")
+    parser.add_argument("--title-max-chars", type=int, default=DEFAULT_TITLE_MAX_CHARS, help="Shorten titles to this WeChat limit before submitting.")
     parser.add_argument("--publish-verify-wait", type=int, default=180, help="Seconds to wait for a submitted audio row to become 已发表.")
     parser.add_argument("--pause-seconds", type=int, default=120)
     parser.add_argument("--wait-for-enter", action="store_true")
@@ -1055,6 +1153,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.set_defaults(transcode_mp3=True)
     parser.add_argument("--submit-mode", choices=["pause", "draft", "publish"], default="pause")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--preflight", action="store_true", help="Validate selected queue rows without opening the browser.")
     args = parser.parse_args(argv)
 
     rows, fieldnames = read_queue(args.queue)
@@ -1063,8 +1162,10 @@ def main(argv: list[str] | None = None) -> int:
         print("No queue items matched.")
         return 0
     if args.dry_run:
-        dry_run(items)
+        dry_run(items, args)
         return 0
+    if args.preflight:
+        return 0 if preflight_items(items, args, prepare=True) else 1
 
     playwright, context = launch_context(args)
     page = context.pages[0] if context.pages else context.new_page()
